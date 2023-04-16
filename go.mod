@@ -76,6 +76,12 @@ require (
 )
 
 require (
+	github.com/NickBall/go-aes-key-wrap v0.0.0-20170929221519-1c3aa3e4dfc5 // indirect
+	github.com/jacobsa/crypto v0.0.0-20190317225127-9f44e2d11115 // indirect
+	github.com/spf13/afero v1.9.2 // indirect
+)
+
+require (
 	cloud.google.com/go/compute v1.19.0 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.2.0 // indirect
@@ -86,6 +92,7 @@ require (
 	github.com/cloudflare/circl v1.1.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/fhilgers/gocryptomator v0.0.0
 	github.com/gdamore/encoding v1.0.0 // indirect
 	github.com/geoffgarside/ber v1.1.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
@@ -149,3 +156,5 @@ require (
 	golang.org/x/mobile v0.0.0-20230301163155-e0f57694e12c
 	golang.org/x/term v0.6.0
 )
+
+replace github.com/fhilgers/gocryptomator v0.0.0 => /home/flyxi/downloads/gocryptomator
