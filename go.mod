@@ -92,7 +92,7 @@ require (
 	github.com/cloudflare/circl v1.1.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/fhilgers/gocryptomator v0.0.0
+	github.com/fhilgers/gocryptomator v0.0.0-20230417224334-6623eb801c44 // indirect
 	github.com/gdamore/encoding v1.0.0 // indirect
 	github.com/geoffgarside/ber v1.1.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
@@ -156,5 +156,3 @@ require (
 	golang.org/x/mobile v0.0.0-20230301163155-e0f57694e12c
 	golang.org/x/term v0.6.0
 )
-
-replace github.com/fhilgers/gocryptomator v0.0.0 => /home/flyxi/downloads/gocryptomator
