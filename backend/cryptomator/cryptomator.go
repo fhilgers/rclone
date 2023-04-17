@@ -188,8 +188,7 @@ func (f *Fs) Hashes() hash.Set {
 }
  
 func (f *Fs) Features() *fs.Features {
-    // TODO use wrapped Features()
-    return new(fs.Features)
+    return &f.features
 }
  
 type Object struct {
@@ -281,7 +280,7 @@ func (o *Object) Size() int64 {
 }
 
 func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) {
-  return "", nil
+  return "", hash.ErrUnsupported
 }
 
 
@@ -447,11 +446,11 @@ func resolveDir(ctx context.Context, vault vault.Vault, dataFs fs.Fs, path, pare
         if reader, err = obj.Open(ctx); err != nil {
             return
         }
-        defer reader.Close()
 
         if dirIDBytes, err = io.ReadAll(reader); err != nil {
             return
         }
+        reader.Close()
 
         dirID = string(dirIDBytes)
         if dir, err = vault.PathFromDirID(dirID); err != nil {
