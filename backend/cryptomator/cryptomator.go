@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,9 @@ import (
 	"github.com/rclone/rclone/fs/fspath"
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/fs/object"
+	"github.com/spf13/afero"
+
+	//"github.com/rclone/rclone/fs/object"
 	"github.com/rclone/rclone/vfs"
 
 	"github.com/fhilgers/gocryptomator/pkg/vault"
@@ -55,6 +59,7 @@ type Options struct {
 
 type Fs struct {
 	dataFs     fs.Fs
+  vfs *vfs.VFS
 	name       string
 	root       string
 	vault      vault.Vault
@@ -70,66 +75,117 @@ func newOpts(m configmap.Mapper) (*Options, error) {
 }
 
 type VaultFs struct {
+  *vfs.VFS
 	fs.Fs
-	vfs.VFS
 	ctx context.Context
 }
 
-func (f *VaultFs) Open(name string) (io.Reader, error) {
-	obj, err := f.NewObject(f.ctx, name)
-	if err != nil {
-		return nil, err
-	}
-
-	return obj.Open(f.ctx)
+func (v VaultFs) Chtimes(name string, atime time.Time, mtime time.Time) error {
+  return v.VFS.Chtimes("/" + name, atime, mtime)
+}
+func (v VaultFs) Create(name string) (afero.File, error) {
+  return v.VFS.Create("/" + name)
+}
+func (v VaultFs) Mkdir(name string, perm os.FileMode) error {
+  return v.VFS.Mkdir("/" + name, perm)
+}
+func (v VaultFs) MkdirAll(path string, perm os.FileMode) error {
+  return v.VFS.MkdirAll("/" + path, perm)
+}
+func (v VaultFs) Open(name string) (afero.File, error) {
+  return v.VFS.Open("/" + name)
+}
+func (v VaultFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
+  return v.VFS.OpenFile("/" + name, flag, perm)
+}
+func (v VaultFs) Remove(name string) error {
+  return v.VFS.Remove("/" + name)
+}
+func (v VaultFs) Stat(name string) (os.FileInfo, error) {
+  return v.VFS.Stat("/" + name)
 }
 
-func (f *VaultFs) Mkdir(name string) error {
-	return f.Fs.Mkdir(f.ctx, name)
+func (v VaultFs) Chmod(name string, mode os.FileMode) error {
+  return vfs.ENOSYS
+}
+func (v VaultFs) Chown(name string, uid, gid int) error {
+  return vfs.ENOSYS
+}
+func (v VaultFs) Name() string {
+  return ""
+}
+func (v VaultFs) RemoveAll(path string) error {
+  return vfs.ENOSYS
+}
+func (v VaultFs) Rename(oldname, newname string) error {
+  return vfs.ENOSYS
 }
 
-type wrapWriteCloser struct {
-	io.WriteCloser
-	errChan chan (error)
-}
-
-func (c wrapWriteCloser) Close() error {
-	err := c.WriteCloser.Close()
-	if err != nil {
-		return err
-	}
-
-	err = <-c.errChan
-	return err
-}
-
-func (f *VaultFs) Create(name string) (io.WriteCloser, error) {
-	reader, writer := io.Pipe()
-
-	errChan := make(chan error)
-	go func() {
-		_, err := f.Put(f.ctx, reader, object.NewStaticObjectInfo(name, time.Now(), -1, true, nil, f.Fs))
-		errChan <- err
-	}()
-
-	return wrapWriteCloser{
-		WriteCloser: writer,
-		errChan:     errChan,
-	}, nil
-	// return f.VFS.Create("/" + name)
-}
-
+// func (f *VaultFs) Open(name string) (io.Reader, error) {
+//   /*
+//   obj, err := f.NewObject(f.ctx, name)
+//   if err != nil {
+//     return nil, err
+//   }
+//
+//   return obj.Open(f.ctx)
+//   */
+//   return f.VFS.Open("/" + name)
+// }
+//
+// func (f *VaultFs) Mkdir(name string) error {
+//   //return f.Fs.Mkdir(f.ctx, name)
+//   return f.VFS.MkdirAll("/" + name, 0755)
+// }
+//
+// type wrapWriteCloser struct {
+//   io.WriteCloser
+//   errChan chan (error)
+// }
+//
+// func (c wrapWriteCloser) Close() error {
+//   err := c.WriteCloser.Close()
+//   if err != nil {
+//     return err
+//   }
+//
+//   err = <-c.errChan
+//   return err
+// }
+//
+// func (f *VaultFs) Create(name string) (io.WriteCloser, error) {
+//   /*
+//   reader, writer := io.Pipe()
+//
+//   errChan := make(chan error)
+//   go func() {
+//     _, err := f.Put(f.ctx, reader, object.NewStaticObjectInfo(name, time.Now(), -1, true, nil, f.Fs))
+//     errChan <- err
+//   }()
+//
+//   return wrapWriteCloser{
+//     WriteCloser: writer,
+//     errChan:     errChan,
+//   }, nil
+//   */
+//   return f.VFS.Create("/" + name)
+// }
+//
 func (f *VaultFs) Rmdir(name string) error {
-	return f.Fs.Rmdir(f.ctx, name)
+  //return f.Fs.Rmdir(f.ctx, name)
+  return f.VFS.Remove("/" + name)
 }
 
 func (f *VaultFs) RemoveFile(name string) error {
-	obj, err := f.NewObject(f.ctx, name)
-	if err != nil {
-		return err
-	}
+  /*
+  obj, err := f.NewObject(f.ctx, name)
+  if err != nil {
+    return err
+  }
 
-	return obj.Remove(f.ctx)
+  return obj.Remove(f.ctx)
+  */
+  return f.VFS.Remove("/" + name)
 }
 
 func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, error) {
@@ -147,9 +203,11 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 		return nil, err
 	}
 
+  vfs := vfs.New(rootFs, nil)
+
 	vaultFs := &VaultFs{
 		Fs:  rootFs,
-		VFS: *vfs.New(rootFs, nil),
+		VFS: vfs,
 		ctx: ctx,
 	}
 
@@ -188,6 +246,7 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 	}
 
 	f := &Fs{
+    vfs: vfs,
 		dataFs:     dataFs,
 		name:       name,
 		root:       rpath,
@@ -220,7 +279,8 @@ func (f *Fs) String() string {
 }
 
 func (f *Fs) Precision() time.Duration {
-	return f.dataFs.Precision()
+	//return f.dataFs.Precision()
+  return f.vfs.Fs().Precision()
 }
 
 func (f *Fs) Hashes() hash.Set {
@@ -410,7 +470,8 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 		return nil, fs.ErrorDirNotFound
 	}
 
-	entries, err = f.dataFs.List(ctx, encDirPath)
+	//entries, err = f.dataFs.List(ctx, encDirPath)
+  entries, err = f.vfs.Fs().List(ctx, filepath.Join("d", encDirPath))
 	if err != nil {
 		return nil, err
 	}
@@ -423,19 +484,173 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 	return wrappedEntries, nil
 }
 
-func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
-	encFilePath, dirID, err := f.resolveFileV2(remote)
-	if err != nil {
-		// TODO
-		return nil, fs.ErrorObjectNotFound
-	}
+type Object2 struct {
+  fs.ObjectInfo
+  f *Fs
+  encRemote string
+  path string
+}
 
-	obj, err := f.dataFs.NewObject(ctx, encFilePath)
+type wrapReader struct {
+  io.Reader
+  io.Closer
+}
+
+func (o *Object2) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
+
+
+  var offset, limit int64 = 0, -1
+	var openOptions []fs.OpenOption
+	for _, option := range options {
+		switch x := option.(type) {
+		case *fs.SeekOption:
+			offset = x.Offset
+		case *fs.RangeOption:
+			offset, limit = x.Decode(o.Size())
+		default:
+			openOptions = append(openOptions, option)
+		}
+	}
+  // TODO handle openOptions
+
+  file, err := o.f.vault.Open(o.path)
+  if err != nil {
+    return nil, err
+  }
+  /*
+	reader, err := o.f.vfs.Open(o.encRemote)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.newObject(obj, path.Dir(remote), dirID)
+	wrappedReader, err := o.f.vault.NewReader(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	readCloser := readCloseWrapper{
+		Reader: wrappedReader,
+		Closer: reader,
+	}
+  */
+
+	if offset > 0 {
+		_, err := io.CopyN(io.Discard, file, offset)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if limit != -1 {
+		return readCloseWrapper{
+			Reader: io.LimitReader(file, limit),
+			Closer: file,
+		}, nil
+	}
+
+	return file, nil
+}
+
+func (o *Object2) Remove(ctx context.Context) error {
+  return o.f.vfs.Remove(o.encRemote)
+}
+
+func (o *Object2) ModTime(ctx context.Context) time.Time {
+  info, err := o.f.vfs.Stat(o.encRemote)
+  if err != nil {
+    return time.Now()
+  }
+  return info.ModTime()
+}
+
+func (o *Object2) Size() int64 {
+  info, err := o.f.vfs.Stat(o.encRemote)
+  if err != nil {
+    return -1
+  }
+  return vault.CalculateRawFileSize(info.Size())
+}
+
+
+func (o *Object2) SetModTime(ctx context.Context, t time.Time) error {
+  return o.f.vfs.Chtimes(o.encRemote, t, t)
+}
+
+func (o *Object2) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
+  // TODO perms
+  writer, err := o.f.vfs.OpenFile(o.encRemote, os.O_WRONLY | os.O_TRUNC, 0644)
+  if err != nil {
+    return err
+  }
+
+  if err = o.f.vfs.Chtimes(o.encRemote, src.ModTime(ctx), src.ModTime(ctx)); err != nil {
+    return err
+  }
+
+  encWriter, err := o.f.vault.NewWriter(writer)
+  if err != nil {
+    return err
+  }
+
+  if _, err = io.Copy(encWriter, in); err != nil {
+    return err
+  }
+
+  if err = encWriter.Close(); err != nil {
+    return err
+  }
+
+  if err = writer.Close(); err != nil {
+    return err
+  }
+
+  return nil
+}
+
+func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
+  // FIXME
+  f.vfs.FlushDirCache()
+
+  info, err := f.vault.Stat(f.fullPath(remote))
+
+  if err != nil {
+    return nil, fs.ErrorObjectNotFound
+  } else if info.IsDir() {
+    return nil, fs.ErrorIsDir
+  }
+
+	encFilePath, _, err := f.resolveFileV2(remote)
+	if err != nil {
+		// TODO
+		return nil, fs.ErrorObjectNotFound
+	}
+  /*
+
+  info, err := f.vfs.Stat("/d/" + encFilePath)
+  if err != nil {
+    return nil, fs.ErrorObjectNotFound
+  } else if info.IsDir() {
+    return nil, fs.ErrorIsDir
+  }
+  */
+
+  objInfo := object.NewStaticObjectInfo(remote, info.ModTime(), info.Size(), true, nil, f)
+
+  obj := &Object2{
+    ObjectInfo: objInfo,
+    f: f,
+    encRemote: "/d/" + encFilePath,
+    path: f.fullPath(remote),
+  }
+
+	//obj, err := f.dataFs.NewObject(ctx, encFilePath)
+  //obj, err := f.vfs.Fs().NewObject(ctx, filepath.Join("d", encFilePath))
+	if err != nil {
+		return nil, err
+	}
+
+	//return f.newObject(obj, path.Dir(remote), dirID)
+  return obj, nil
 }
 
 type encryptedObjectInfo struct {
@@ -449,7 +664,7 @@ func (i *encryptedObjectInfo) Hash(ctx context.Context, ty hash.Type) (string, e
 }
 
 func (i *encryptedObjectInfo) Size() int64 {
-	return vault.CalculateEncryptedFileSize(i.ObjectInfo.Size())
+	return i.size
 }
 
 func (i *encryptedObjectInfo) Remote() string {
@@ -460,7 +675,7 @@ func (f *Fs) newEncryptedObjectInfo(ctx context.Context, src fs.ObjectInfo, remo
 	return &encryptedObjectInfo{
 		ObjectInfo: src,
 		size:       vault.CalculateEncryptedFileSize(src.Size()),
-		remote:     remote,
+		remote:     filepath.Join("d", remote),
 	}, nil
 }
 
@@ -506,7 +721,63 @@ func (f *Fs) put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options [
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	return f.put(ctx, in, src, options, f.dataFs.Put)
+  if err := f.Mkdir(ctx, filepath.Dir(src.Remote())); err != nil {
+    return nil, err
+  }
+
+	encFilePath, _, err := f.resolveFileV2(src.Remote())
+	if err != nil {
+		return nil, err
+	}
+
+  encFilePath = filepath.Join("/d", encFilePath)
+
+  handle, err := f.vfs.Create(encFilePath)
+  if err != nil {
+    return nil, err
+  }
+
+  if err = f.vfs.Chtimes(encFilePath, src.ModTime(ctx), src.ModTime(ctx)); err != nil {
+    return nil, err
+  }
+
+  encWriter, err := f.vault.NewWriter(handle)
+  if err != nil {
+    return nil, err
+  }
+
+  if _, err := io.Copy(encWriter, in); err != nil {
+    f.vfs.Remove(encFilePath)
+    return nil, err
+  }
+
+  if err = encWriter.Close(); err != nil {
+    f.vfs.Remove(encFilePath)
+    return nil, err
+  }
+
+  info, err := handle.Stat()
+  if err != nil {
+    f.vfs.Remove(encFilePath)
+    return nil, err
+  }
+
+  objInfo := object.NewStaticObjectInfo(src.Remote(), info.ModTime(), vault.CalculateRawFileSize(info.Size()), false, nil, f)
+
+  if err = handle.Close(); err != nil {
+    f.vfs.Remove(encFilePath)
+    return nil, err
+  }
+
+  obj := &Object2{
+    ObjectInfo: objInfo,
+    f: f,
+    encRemote: encFilePath,
+    path: f.fullPath(src.Remote()),
+  }
+
+  return obj, nil
+	//return f.put(ctx, in, src, options, f.vfs.Fs().Put)
 }
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error {
