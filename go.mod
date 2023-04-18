@@ -156,3 +156,5 @@ require (
 	golang.org/x/mobile v0.0.0-20230301163155-e0f57694e12c
 	golang.org/x/term v0.6.0
 )
+
+replace github.com/fhilgers/gocryptomator v0.0.0-20230417224334-6623eb801c44 => /home/flyxi/downloads/gocryptomator/
