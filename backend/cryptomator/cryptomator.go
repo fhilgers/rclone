@@ -25,9 +25,9 @@ func init() {
 		Name:        "cryptomator",
 		Description: "Treat a remote as Cryptomator Vault",
 		NewFs:       NewFs,
-    MetadataInfo: &fs.MetadataInfo{
-      Help: `Any metadata supported by the underlying remote is read and written`,
-    },
+		MetadataInfo: &fs.MetadataInfo{
+			Help: `Any metadata supported by the underlying remote is read and written`,
+		},
 		Options: []fs.Option{
 			{
 				Name:     "remote",
@@ -50,11 +50,11 @@ type Options struct {
 }
 
 type Fs struct {
-  fs         fs.Fs
-	name       string
-	root       string
-	vault      *vault.Vault
-	features   *fs.Features
+	fs       fs.Fs
+	name     string
+	root     string
+	vault    *vault.Vault
+	features *fs.Features
 }
 
 func newOpts(m configmap.Mapper) (*Options, error) {
@@ -62,7 +62,6 @@ func newOpts(m configmap.Mapper) (*Options, error) {
 	err := configstruct.Set(m, opts)
 	return opts, err
 }
-
 
 func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, error) {
 	opts, err := newOpts(m)
@@ -80,8 +79,8 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 	}
 
 	vaultFs := &VaultFs{
-    f: rootFs,
-    ctx: ctx,
+		f:   rootFs,
+		ctx: ctx,
 	}
 
 	password, err := obscure.Reveal(opts.Password)
@@ -89,45 +88,48 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 		return nil, err
 	}
 
-  v, err := vault.Open(vaultFs, password)
-  if err != nil {
-    v, err = vault.Create(vaultFs, password)
-    if err != nil {
-      return nil, fmt.Errorf("failed to unlock vault: %w", err)
-    }
-  }
+	v, err := vault.Open(vaultFs, password)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unlock vault: %w", err)
+
+		// TODO create command to init vault
+		/*
+			v, err = vault.Create(vaultFs, password)
+			if err != nil {
+				return nil, fmt.Errorf("failed to unlock vault: %w", err)
+			}
+		*/
+	}
 
 	var fsErr error
-  if filePath, err := v.GetFilePath(rpath); err == nil {
-    if exists, err := fs.FileExists(ctx, rootFs, filePath); exists {
+	if filePath, err := v.GetFilePath(rpath); err == nil {
+		if exists, _ := fs.FileExists(ctx, rootFs, filePath); exists {
 			rpath = path.Dir(rpath)
 			fsErr = fs.ErrorIsFile
-    } else if err != nil {
-      return nil, err
-    }
-  }
+		}
+	}
 
 	f := &Fs{
-		name:       name,
-		root:       rpath,
-		vault:      v,
-    fs: rootFs,
+		name:  name,
+		root:  rpath,
+		vault: v,
+		fs:    rootFs,
 	}
 
 	cache.PinUntilFinalized(rootFs, f)
 
 	f.features = (&fs.Features{
-    CaseInsensitive: false,
-    DuplicateFiles: true,
-    BucketBased: true,
+		CaseInsensitive:         false,
+		DuplicateFiles:          true,
+		BucketBased:             true,
 		CanHaveEmptyDirectories: true,
-    SetTier: true,
-    GetTier: true,
-    ReadMetadata: true,
-    WriteMetadata: true,
-    UserMetadata: true,
-    WriteMimeType: false,
-    ReadMimeType: false,
+		SetTier:                 true,
+		GetTier:                 true,
+		ReadMetadata:            true,
+		WriteMetadata:           true,
+		UserMetadata:            true,
+		WriteMimeType:           false,
+		ReadMimeType:            false,
 	}).Fill(ctx, f).Mask(ctx, rootFs).WrapsFs(f, rootFs)
 
 	return f, fsErr
@@ -158,33 +160,32 @@ func (f *Fs) Features() *fs.Features {
 }
 
 func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
-  path, err := f.vault.GetDirPath(f.fullPath(dir))
-  if err != nil {
-    return nil, fs.ErrorDirNotFound
-  }
+	path, err := f.vault.GetDirPath(f.fullPath(dir))
+	if err != nil {
+		return nil, fs.ErrorDirNotFound
+	}
 
-  entries, err := f.fs.List(ctx, path)
-  if err != nil {
-    return nil, err
-  }
+	entries, err := f.fs.List(ctx, path)
+	if err != nil {
+		return nil, err
+	}
 
-
-  return f.wrapEntries(entries, dir)
+	return f.wrapEntries(entries, dir)
 }
 
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	fullPath := f.fullPath(remote)
-  objPath, err := f.vault.GetFilePath(fullPath)
-  if err != nil {
-    return nil, err
-  }
+	objPath, err := f.vault.GetFilePath(fullPath)
+	if err != nil {
+		return nil, err
+	}
 
-  obj, err := f.fs.NewObject(ctx, objPath)
-  if err != nil {
-    return nil, err
-  }
+	obj, err := f.fs.NewObject(ctx, objPath)
+	if err != nil {
+		return nil, err
+	}
 
-  return f.newObject(obj, path.Dir(remote))
+	return f.newObject(obj, path.Dir(remote))
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (obj fs.Object, err error) {
@@ -198,37 +199,37 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		return
 	}
 
-  encReader, err := f.vault.NewEncryptReader(in)
-  if err != nil {
-    return nil, err
-  }
+	encReader, err := f.vault.NewEncryptReader(in)
+	if err != nil {
+		return nil, err
+	}
 
-  info := f.newEncryptedObjectInfo(src, objPath)
-  //info := object.NewStaticObjectInfo(objPath, src.ModTime(ctx), vault.CalculateEncryptedFileSize(src.Size()), src.Storable(), nil, f)
+	info := f.newEncryptedObjectInfo(src, objPath)
+	// info := object.NewStaticObjectInfo(objPath, src.ModTime(ctx), vault.CalculateEncryptedFileSize(src.Size()), src.Storable(), nil, f)
 
-  obj, err = f.fs.Put(ctx, encReader, info, options...)
-  if err != nil {
-    return nil, err
-  }
+	obj, err = f.fs.Put(ctx, encReader, info, options...)
+	if err != nil {
+		return nil, err
+	}
 
-  return f.newObject(obj, path.Dir(src.Remote()))
+	return f.newObject(obj, path.Dir(src.Remote()))
 }
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error {
-  fullPath := f.fullPath(dir)
-  fullPath = path.Clean(fullPath)
-  if fullPath == "." {
-    fullPath = ""
-  }
+	fullPath := f.fullPath(dir)
+	fullPath = path.Clean(fullPath)
+	if fullPath == "." {
+		fullPath = ""
+	}
 
-  segments := strings.Split(fullPath, "/")
-  for i := range segments {
-    if err := f.vault.Mkdir(strings.Join(segments[:i + 1], "/")); err != nil {
-      return err
-    }
-  }
+	segments := strings.Split(fullPath, "/")
+	for i := range segments {
+		if err := f.vault.Mkdir(strings.Join(segments[:i+1], "/")); err != nil {
+			return err
+		}
+	}
 
-  return nil
+	return nil
 }
 
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
@@ -236,51 +237,50 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 }
 
 func (f *Fs) newObject(obj fs.Object, dir string) (*Object, error) {
-  dirID, err := f.vault.GetDirID(f.fullPath(dir))
-  if err != nil {
-    return nil, err
-  }
+	dirID, err := f.vault.GetDirID(f.fullPath(dir))
+	if err != nil {
+		return nil, err
+	}
 
-  encName := path.Base(obj.Remote())
-  decName, err := f.vault.DecryptFileName(encName, dirID)
-  if err != nil {
-    return nil, err
-  }
+	encName := path.Base(obj.Remote())
+	decName, err := f.vault.DecryptFileName(encName, dirID)
+	if err != nil {
+		return nil, err
+	}
 
 	return &Object{
-    Object: obj,
-    remote: path.Join(dir, decName),
-    size: vault.CalculateRawFileSize(obj.Size()),
-		f:          f,
-  }, nil
+		Object: obj,
+		remote: path.Join(dir, decName),
+		size:   vault.CalculateRawFileSize(obj.Size()),
+		f:      f,
+	}, nil
 }
 
 func (f *Fs) newDirectory(d fs.Directory, dir string) (*Directory, error) {
-  dirID, err := f.vault.GetDirID(f.fullPath(dir))
-  if err != nil {
-    return nil, err
-  }
+	dirID, err := f.vault.GetDirID(f.fullPath(dir))
+	if err != nil {
+		return nil, err
+	}
 
-  encName := path.Base(d.Remote())
-  decName, err := f.vault.DecryptFileName(encName, dirID)
-  if err != nil {
-    return nil, err
-  }
+	encName := path.Base(d.Remote())
+	decName, err := f.vault.DecryptFileName(encName, dirID)
+	if err != nil {
+		return nil, err
+	}
 
-  return &Directory{
-    remote: path.Join(dir, decName),
-    Directory: d,
-  }, nil
+	return &Directory{
+		remote:    path.Join(dir, decName),
+		Directory: d,
+	}, nil
 }
 
-func (f *Fs) newEncryptedObjectInfo(info fs.ObjectInfo, remote string) (*EncryptedObjectInfo) {
-  return &EncryptedObjectInfo{
-    ObjectInfo: info,
-    remote: remote,
-    size: vault.CalculateEncryptedFileSize(info.Size()),
-  }
+func (f *Fs) newEncryptedObjectInfo(info fs.ObjectInfo, remote string) *EncryptedObjectInfo {
+	return &EncryptedObjectInfo{
+		ObjectInfo: info,
+		remote:     remote,
+		size:       vault.CalculateEncryptedFileSize(info.Size()),
+	}
 }
-
 
 func (f *Fs) fullPath(path string) string {
 	return filepath.Join(f.root, path)
@@ -289,109 +289,107 @@ func (f *Fs) fullPath(path string) string {
 func (f *Fs) wrapEntries(entries fs.DirEntries, dir string) (wrappedEntries fs.DirEntries, err error) {
 	var wrappedEntry fs.DirEntry
 	for _, entry := range entries {
-    switch x := entry.(type) {
-    case fs.Object:
-      if path.Base(x.Remote()) == "dirid.c9r" {
-        continue
-      }
-      wrappedEntry, err = f.newObject(x, dir)
-    case fs.Directory:
-      wrappedEntry, err = f.newDirectory(x, dir)
-	  }
+		switch x := entry.(type) {
+		case fs.Object:
+			if path.Base(x.Remote()) == "dirid.c9r" {
+				continue
+			}
+			wrappedEntry, err = f.newObject(x, dir)
+		case fs.Directory:
+			wrappedEntry, err = f.newDirectory(x, dir)
+		}
 
-    if err != nil {
-      return
-    }
+		if err != nil {
+			return
+		}
 
 		wrappedEntries = append(wrappedEntries, wrappedEntry)
-  }
+	}
 
 	return
 }
 
-
 type Directory struct {
-  fs.Directory
-  remote string
+	fs.Directory
+	remote string
 }
 
 func (d *Directory) String() string {
-  return d.remote
+	return d.remote
 }
 
 func (d *Directory) Remote() string {
-  return d.remote
+	return d.remote
 }
 
 func (d *Directory) Items() int64 {
-  // We dont know the real amount and would have to call list again
+	// We dont know the real amount and would have to call list again
 	return -1
 }
 
 type EncryptedObjectInfo struct {
-  fs.ObjectInfo
+	fs.ObjectInfo
 
-  remote string
-  size int64
+	remote string
+	size   int64
 }
 
 func (i *EncryptedObjectInfo) Remote() string {
-  return i.remote
+	return i.remote
 }
+
 func (i *EncryptedObjectInfo) String() string {
-  return i.remote
+	return i.remote
 }
 
 func (i *EncryptedObjectInfo) Size() int64 {
-  return i.size
+	return i.size
 }
 
 func (i *EncryptedObjectInfo) Metadata(ctx context.Context) (fs.Metadata, error) {
-  do, ok := i.ObjectInfo.(fs.Metadataer)
-  if !ok {
-    return nil, nil
-  }
-  return do.Metadata(ctx)
+	do, ok := i.ObjectInfo.(fs.Metadataer)
+	if !ok {
+		return nil, nil
+	}
+	return do.Metadata(ctx)
 }
 
-
 type Object struct {
-  fs.Object
+	fs.Object
 
 	f *Fs
 
-  remote string
-  size int64
+	remote string
+	size   int64
 }
 
 func (o *Object) String() string {
-  return o.remote
+	return o.remote
 }
 
 func (o *Object) Remote() string {
-  return o.remote
+	return o.remote
 }
 
 func (o *Object) Size() int64 {
-  return o.size
+	return o.size
 }
 
 func (o *Object) Fs() fs.Info {
-  return o.f
+	return o.f
 }
 
 func (o *Object) Metadata(ctx context.Context) (fs.Metadata, error) {
-  do, ok := o.Object.(fs.Metadataer)
-  if !ok {
-    return nil, nil
-  }
-  return do.Metadata(ctx)
+	do, ok := o.Object.(fs.Metadataer)
+	if !ok {
+		return nil, nil
+	}
+	return do.Metadata(ctx)
 }
 
 func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) {
-  return "", hash.ErrUnsupported
+	return "", hash.ErrUnsupported
 }
-
 
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
 	var offset, limit int64 = 0, -1
@@ -406,36 +404,36 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 			openOptions = append(openOptions, option)
 		}
 	}
-	//TODO handle openOptions
+	// TODO handle openOptions
 
-  readCloser, err := o.Object.Open(ctx, openOptions...)
-  if err != nil {
-    return nil, err
-  }
+	readCloser, err := o.Object.Open(ctx, openOptions...)
+	if err != nil {
+		return nil, err
+	}
 
-  decReader, err := o.f.vault.NewDecryptReader(readCloser)
-  if err != nil {
-    return nil, err
-  }
+	decReader, err := o.f.vault.NewDecryptReader(readCloser)
+	if err != nil {
+		return nil, err
+	}
 
-  if offset > 0 {
-    _, err := io.CopyN(io.Discard, decReader, offset)
-    if err != nil {
-      return nil, err
-    }
-  }
+	if offset > 0 {
+		_, err := io.CopyN(io.Discard, decReader, offset)
+		if err != nil {
+			return nil, err
+		}
+	}
 
-  if limit != -1 {
-    return readCloseWrapper{
-      Reader: io.LimitReader(decReader, limit),
-      Closer: readCloser,
-    }, nil
-  }
+	if limit != -1 {
+		return readCloseWrapper{
+			Reader: io.LimitReader(decReader, limit),
+			Closer: readCloser,
+		}, nil
+	}
 
-  return readCloseWrapper{
-    Reader: decReader,
-    Closer: readCloser,
-  }, nil
+	return readCloseWrapper{
+		Reader: decReader,
+		Closer: readCloser,
+	}, nil
 }
 
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
@@ -446,29 +444,26 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		return nil
 	}
 
-  encReader, err := o.f.vault.NewEncryptReader(in)
-  if err != nil {
-    return err
-  }
+	encReader, err := o.f.vault.NewEncryptReader(in)
+	if err != nil {
+		return err
+	}
 
-  info := o.f.newEncryptedObjectInfo(src, objPath)
-  //info := object.NewStaticObjectInfo(objPath, src.ModTime(ctx), vault.CalculateEncryptedFileSize(src.Size()), src.Storable(), nil, o.f)
+	info := o.f.newEncryptedObjectInfo(src, objPath)
+	// info := object.NewStaticObjectInfo(objPath, src.ModTime(ctx), vault.CalculateEncryptedFileSize(src.Size()), src.Storable(), nil, o.f)
 
-  o.size = src.Size()
+	o.size = src.Size()
 
-  return o.Object.Update(ctx, encReader, info, options...)
+	return o.Object.Update(ctx, encReader, info, options...)
 }
-
 
 type readCloseWrapper struct {
 	io.Reader
 	io.Closer
 }
 
-
-
 var (
-  _ fs.Fs = (*Fs)(nil)
-  _ fs.Object = (*Object)(nil)
-  _ fs.Directory = (*Directory)(nil)
+	_ fs.Fs        = (*Fs)(nil)
+	_ fs.Object    = (*Object)(nil)
+	_ fs.Directory = (*Directory)(nil)
 )
