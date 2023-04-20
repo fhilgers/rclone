@@ -16,6 +16,7 @@ import (
 	"github.com/rclone/rclone/fs/config/configstruct"
 	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/hash"
+	"github.com/rclone/rclone/fs/object"
 
 	"github.com/fhilgers/gocryptomator/pkg/vault"
 )
@@ -90,19 +91,17 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 
 	v, err := vault.Open(vaultFs, password)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unlock vault: %w", err)
+		// eturn nil, fmt.Errorf("failed to unlock vault: %w", err)
 
 		// TODO create command to init vault
-		/*
-			v, err = vault.Create(vaultFs, password)
-			if err != nil {
-				return nil, fmt.Errorf("failed to unlock vault: %w", err)
-			}
-		*/
+		v, err = vault.Create(vaultFs, password)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unlock vault: %w", err)
+		}
 	}
 
 	var fsErr error
-	if filePath, err := v.GetFilePath(rpath); err == nil {
+	if filePath, _, err := v.GetFilePath(rpath); err == nil {
 		if exists, _ := fs.FileExists(ctx, rootFs, filePath); exists {
 			rpath = path.Dir(rpath)
 			fsErr = fs.ErrorIsFile
@@ -160,7 +159,7 @@ func (f *Fs) Features() *fs.Features {
 }
 
 func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
-	path, err := f.vault.GetDirPath(f.fullPath(dir))
+	path, dirID, err := f.vault.GetDirPath(f.fullPath(dir))
 	if err != nil {
 		return nil, fs.ErrorDirNotFound
 	}
@@ -170,12 +169,12 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 		return nil, err
 	}
 
-	return f.wrapEntries(entries, dir)
+	return f.wrapEntries(entries, dir, dirID)
 }
 
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	fullPath := f.fullPath(remote)
-	objPath, err := f.vault.GetFilePath(fullPath)
+	objPath, dirID, err := f.vault.GetFilePath(fullPath)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +184,7 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 		return nil, err
 	}
 
-	return f.newObject(obj, path.Dir(remote))
+	return f.newObject(obj, path.Dir(remote), dirID)
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (obj fs.Object, err error) {
@@ -194,7 +193,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		return
 	}
 
-	objPath, err := f.vault.GetFilePath(fullPath)
+	objPath, dirID, err := f.vault.GetFilePath(fullPath)
 	if err != nil {
 		return
 	}
@@ -205,14 +204,13 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}
 
 	info := f.newEncryptedObjectInfo(src, objPath)
-	// info := object.NewStaticObjectInfo(objPath, src.ModTime(ctx), vault.CalculateEncryptedFileSize(src.Size()), src.Storable(), nil, f)
 
 	obj, err = f.fs.Put(ctx, encReader, info, options...)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.newObject(obj, path.Dir(src.Remote()))
+	return f.newObject(obj, path.Dir(src.Remote()), dirID)
 }
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error {
@@ -236,12 +234,166 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 	return f.vault.Rmdir(f.fullPath(dir))
 }
 
-func (f *Fs) newObject(obj fs.Object, dir string) (*Object, error) {
-	dirID, err := f.vault.GetDirID(f.fullPath(dir))
+func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
+	do := f.fs.Features().Copy
+	if do == nil {
+		return nil, fs.ErrorCantCopy
+	}
+	o, ok := src.(*Object)
+	if !ok {
+		return nil, fs.ErrorCantCopy
+	}
+
+	if err := f.Mkdir(ctx, path.Dir(remote)); err != nil {
+		return nil, err
+	}
+
+	encRemote, dirID, err := f.vault.GetFilePath(f.fullPath(remote))
 	if err != nil {
 		return nil, err
 	}
 
+	oResult, err := do(ctx, o.Object, encRemote)
+	if err != nil {
+		return nil, err
+	}
+	return f.newObject(oResult, path.Dir(remote), dirID)
+}
+
+func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
+	do := f.fs.Features().Move
+	if do == nil {
+		return nil, fs.ErrorCantMove
+	}
+	o, ok := src.(*Object)
+	if !ok {
+		return nil, fs.ErrorCantMove
+	}
+
+	if err := f.Mkdir(ctx, path.Dir(remote)); err != nil {
+		return nil, err
+	}
+
+	encRemote, dirID, err := f.vault.GetFilePath(f.fullPath(remote))
+	if err != nil {
+		return nil, err
+	}
+
+	oResult, err := do(ctx, o.Object, encRemote)
+	if err != nil {
+		return nil, err
+	}
+
+	return f.newObject(oResult, path.Dir(remote), dirID)
+}
+
+// TODO refactor this
+func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string) error {
+	do := f.fs.Features().DirMove
+	if do == nil {
+		return fs.ErrorCantDirMove
+	}
+	srcFs, ok := src.(*Fs)
+	if !ok {
+		fs.Debugf(srcFs, "Can't move directory - not same remote type")
+		return fs.ErrorCantDirMove
+	}
+
+	if _, _, err := f.vault.GetDirPath(f.fullPath(dstRemote)); err == nil {
+		return fs.ErrorDirExists
+	}
+
+	// collect all subdirectories
+	srcsToMove := []string{srcRemote}
+	i := 0
+	for {
+		if i == len(srcsToMove) {
+			break
+		}
+
+		entries, err := srcFs.List(ctx, srcsToMove[i])
+		if err != nil {
+			return err
+		}
+
+		for _, entry := range entries {
+			if d, ok := entry.(fs.Directory); ok {
+				srcsToMove = append(srcsToMove, d.Remote())
+			}
+		}
+
+		i += 1
+	}
+
+	// find all their encrypted paths
+	encSrcNames := []string{}
+	for _, srcName := range srcsToMove {
+		encName, _, err := srcFs.vault.GetDirPath(path.Join(srcFs.root, srcName))
+		if err != nil {
+			return err
+		}
+
+		encSrcNames = append(encSrcNames, encName)
+	}
+
+	// move all the encrypted paths
+	for _, encName := range encSrcNames {
+		if err := do(ctx, srcFs.fs, encName, encName); err == fs.ErrorDirExists {
+			// Ignore
+		} else if err != nil {
+			return err
+		}
+	}
+
+	srcDirID, err := srcFs.vault.GetDirID(path.Join(srcFs.root, srcRemote))
+	if err != nil {
+		return err
+	}
+
+	srcDirIDPath, _, err := srcFs.vault.GetFilePath(path.Join(srcFs.root, srcRemote))
+	if err != nil {
+		return nil
+	}
+
+	// remove dirID from src
+	obj, err := srcFs.fs.NewObject(ctx, path.Join(srcDirIDPath, "dir.c9r"))
+	if err != nil {
+		return err
+	}
+
+	if err = obj.Remove(ctx); err != nil {
+		return err
+	}
+
+	if err = srcFs.fs.Rmdir(ctx, srcDirIDPath); err != nil {
+		return err
+	}
+
+	// create dir in dest
+	if err = f.Mkdir(ctx, path.Dir(dstRemote)); err != nil {
+		return err
+	}
+
+	encName, _, err := f.vault.GetFilePath(f.fullPath(dstRemote))
+	if err != nil {
+		return err
+	}
+
+	if err = f.fs.Mkdir(ctx, encName); err != nil {
+		return err
+	}
+
+	info := object.NewStaticObjectInfo(path.Join(encName, "dir.c9r"), time.Now(), -1, true, nil, f.fs)
+
+	// write dirID to dest
+	if _, err = f.fs.Put(ctx, strings.NewReader(srcDirID), info); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (f *Fs) newObject(obj fs.Object, dir, dirID string) (*Object, error) {
 	encName := path.Base(obj.Remote())
 	decName, err := f.vault.DecryptFileName(encName, dirID)
 	if err != nil {
@@ -256,12 +408,7 @@ func (f *Fs) newObject(obj fs.Object, dir string) (*Object, error) {
 	}, nil
 }
 
-func (f *Fs) newDirectory(d fs.Directory, dir string) (*Directory, error) {
-	dirID, err := f.vault.GetDirID(f.fullPath(dir))
-	if err != nil {
-		return nil, err
-	}
-
+func (f *Fs) newDirectory(d fs.Directory, dir, dirID string) (*Directory, error) {
 	encName := path.Base(d.Remote())
 	decName, err := f.vault.DecryptFileName(encName, dirID)
 	if err != nil {
@@ -286,7 +433,7 @@ func (f *Fs) fullPath(path string) string {
 	return filepath.Join(f.root, path)
 }
 
-func (f *Fs) wrapEntries(entries fs.DirEntries, dir string) (wrappedEntries fs.DirEntries, err error) {
+func (f *Fs) wrapEntries(entries fs.DirEntries, dir, dirID string) (wrappedEntries fs.DirEntries, err error) {
 	var wrappedEntry fs.DirEntry
 	for _, entry := range entries {
 		switch x := entry.(type) {
@@ -294,9 +441,9 @@ func (f *Fs) wrapEntries(entries fs.DirEntries, dir string) (wrappedEntries fs.D
 			if path.Base(x.Remote()) == "dirid.c9r" {
 				continue
 			}
-			wrappedEntry, err = f.newObject(x, dir)
+			wrappedEntry, err = f.newObject(x, dir, dirID)
 		case fs.Directory:
-			wrappedEntry, err = f.newDirectory(x, dir)
+			wrappedEntry, err = f.newDirectory(x, dir, dirID)
 		}
 
 		if err != nil {
@@ -439,7 +586,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
 	fullPath := o.f.fullPath(src.Remote())
 
-	objPath, err := o.f.vault.GetFilePath(fullPath)
+	objPath, _, err := o.f.vault.GetFilePath(fullPath)
 	if err != nil {
 		return nil
 	}

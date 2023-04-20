@@ -149,6 +149,8 @@ github.com/fhilgers/gocryptomator v0.0.0-20230417224334-6623eb801c44 h1:D0oIVUW0
 github.com/fhilgers/gocryptomator v0.0.0-20230417224334-6623eb801c44/go.mod h1:K47YaSIF/aE026Mnalr+1yu7q6yfvvKkSfxpwfsJgjY=
 github.com/fhilgers/gocryptomator v0.0.0-20230420050721-67f52804ff3e h1:UpfLLtk1DW2hjcwtVyKw7SCbvv6rM75qWyV9b69/VYY=
 github.com/fhilgers/gocryptomator v0.0.0-20230420050721-67f52804ff3e/go.mod h1:JLr6E3dK35xI3FK91n5g4yhJaMcHOTgKiJyvuNgQUlo=
+github.com/fhilgers/gocryptomator v0.0.0-20230420191820-9ecf263bc19b h1:w8ByK8p46L1cBdwRe7vTHwnZ6WLcuoBb+hdWHtDCB8I=
+github.com/fhilgers/gocryptomator v0.0.0-20230420191820-9ecf263bc19b/go.mod h1:JLr6E3dK35xI3FK91n5g4yhJaMcHOTgKiJyvuNgQUlo=
 github.com/fsnotify/fsnotify v1.6.0 h1:n+5WquG0fcWoWp6xPWfHdbskMCQaFnG6PfBrh1Ky4HY=
 github.com/gabriel-vasile/mimetype v1.4.2 h1:w5qFW6JKBz9Y393Y4q372O9A7cUSequkh1Q7OhCmWKU=
 github.com/gabriel-vasile/mimetype v1.4.2/go.mod h1:zApsH/mKG4w07erKIaJPFiX0Tsq9BFQgN3qGY5GnNgA=
