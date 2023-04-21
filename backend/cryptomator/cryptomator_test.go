@@ -26,6 +26,7 @@ func TestIntegration(t *testing.T) {
 		UnimplementableFsMethods:     []string{"OpenWriterAt"},
 		UnimplementableObjectMethods: []string{"MimeType"},
 		QuickTestOK:                  true,
+		TiersToTest:                  []string{"REDUCED_REDUNDANCY", "STANDARD"},
 	})
 }
 

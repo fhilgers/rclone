@@ -607,6 +607,23 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	return o.Object.Update(ctx, encReader, info, options...)
 }
 
+func (o *Object) SetTier(tier string) error {
+	do, ok := o.Object.(fs.SetTierer)
+	if !ok {
+		return errors.New("crypt: underlying remote does not support SetTier")
+	}
+	println("SETTING TIER")
+	return do.SetTier(tier)
+}
+
+func (o *Object) GetTier() string {
+	do, ok := o.Object.(fs.GetTierer)
+	if !ok {
+		return ""
+	}
+	return do.GetTier()
+}
+
 type readCloseWrapper struct {
 	io.Reader
 	io.Closer
@@ -615,5 +632,7 @@ type readCloseWrapper struct {
 var (
 	_ fs.Fs        = (*Fs)(nil)
 	_ fs.Object    = (*Object)(nil)
+	_ fs.SetTierer = (*Object)(nil)
+	_ fs.GetTierer = (*Object)(nil)
 	_ fs.Directory = (*Directory)(nil)
 )
