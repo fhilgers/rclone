@@ -65,6 +65,15 @@ func (f *VaultFs) Create(name string) (io.WriteCloser, error) {
 }
 
 func (f *VaultFs) RemoveDir(name string) error {
+	if f.f.Features().BucketBased {
+		entries, err := f.f.List(f.ctx, name)
+		if err != nil {
+			return err
+		}
+		if len(entries) > 0 {
+			return fs.ErrorDirectoryNotEmpty
+		}
+	}
 	return f.f.Rmdir(f.ctx, name)
 }
 
