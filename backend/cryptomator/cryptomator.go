@@ -390,6 +390,9 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 		return err
 	}
 
+	f.vault.FullyInvalidate()
+	srcFs.vault.FullyInvalidate()
+
 	return nil
 }
 

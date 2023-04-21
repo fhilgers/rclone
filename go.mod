@@ -24,7 +24,7 @@ require (
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf
 	github.com/dop251/scsu v0.0.0-20220106150536-84ac88021d00
 	github.com/dropbox/dropbox-sdk-go-unofficial/v6 v6.0.5
-	github.com/fhilgers/gocryptomator v0.0.0-20230420191820-9ecf263bc19b
+	github.com/fhilgers/gocryptomator v0.0.0-20230421212646-23388b494d97
 	github.com/gabriel-vasile/mimetype v1.4.2
 	github.com/gdamore/tcell/v2 v2.6.0
 	github.com/go-chi/chi/v5 v5.0.8
