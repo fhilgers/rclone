@@ -506,6 +506,10 @@ func (i *EncryptedObjectInfo) Metadata(ctx context.Context) (fs.Metadata, error)
 	return do.Metadata(ctx)
 }
 
+func (o *EncryptedObjectInfo) Hash(ctx context.Context, ty hash.Type) (string, error) {
+	return "", hash.ErrUnsupported
+}
+
 type Object struct {
 	fs.Object
 
