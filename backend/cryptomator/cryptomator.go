@@ -131,6 +131,8 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 		ReadMimeType:            false,
 	}).Fill(ctx, f).Mask(ctx, rootFs).WrapsFs(f, rootFs)
 
+	f.features.CanHaveEmptyDirectories = true
+
 	return f, fsErr
 }
 
