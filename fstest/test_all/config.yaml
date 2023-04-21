@@ -32,6 +32,9 @@ backends:
  - backend:  "cryptomator"
    remote:   "TestCryptomatorLocal:"
    fastlist: false
+ - backend:  "cryptomator"
+   remote:   "TestCryptomatorMinio:"
+   fastlist: false
  ## chunker
  - backend:  "chunker"
    remote:   "TestChunkerLocal:"
