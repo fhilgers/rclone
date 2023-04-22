@@ -79,7 +79,7 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 		return nil, err
 	}
 
-  cryptomatorAdapterFs := NewCryptomatorAdapterFs(ctx, rootFs)
+	cryptomatorAdapterFs := NewCryptomatorAdapterFs(ctx, rootFs)
 
 	password, err := obscure.Reveal(opts.Password)
 	if err != nil {
@@ -88,8 +88,8 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 
 	v, err := vault.Open(cryptomatorAdapterFs, password)
 	if err != nil {
-    fs.Logf(rootFs, "vault not found, creating new")
-    v, err = vault.Create(cryptomatorAdapterFs, password)
+		fs.Logf(rootFs, "vault not found, creating new")
+		v, err = vault.Create(cryptomatorAdapterFs, password)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create vault: %w", err)
 		}
@@ -394,16 +394,19 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 }
 
 func (f *Fs) newObject(obj fs.Object, dir, dirID string) (*Object, error) {
-	encName := path.Base(obj.Remote())
-	decName, err := f.vault.DecryptFileName(encName, dirID)
+	encryptedName := path.Base(obj.Remote())
+	decryptedName, err := f.vault.DecryptFileName(encryptedName, dirID)
 	if err != nil {
 		return nil, err
 	}
 
+	remote := path.Join(dir, decryptedName)
+	size := vault.CalculateRawFileSize(obj.Size())
+
 	return &Object{
 		Object: obj,
-		remote: path.Join(dir, decName),
-		size:   vault.CalculateRawFileSize(obj.Size()),
+		remote: remote,
+		size:   size,
 		f:      f,
 	}, nil
 }
@@ -505,6 +508,10 @@ func (o *EncryptedObjectInfo) Hash(ctx context.Context, ty hash.Type) (string, e
 	return "", hash.ErrUnsupported
 }
 
+// Object -------------------------------------------
+
+// Object wraps an object of the underlying fs but stores
+// the decrypted remote and the decrypted file size
 type Object struct {
 	fs.Object
 
@@ -514,22 +521,89 @@ type Object struct {
 	size   int64
 }
 
+// String returns a description of the Object
 func (o *Object) String() string {
 	return o.remote
 }
 
+// Remote returns the decrypted remote path
 func (o *Object) Remote() string {
 	return o.remote
 }
 
+// Size returns the decrypted size of the file
 func (o *Object) Size() int64 {
 	return o.size
 }
 
+// Fs returns read only access to the Fs that this object is part of
 func (o *Object) Fs() fs.Info {
 	return o.f
 }
 
+// Hash returns the selected checksum of the file
+// If no checksum is available it returns ""
+//
+// We cannot compute a hash of the object without downloading
+// and decrypting it so this is not Supported
+func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) {
+	return "", hash.ErrUnsupported
+}
+
+// MimeType returns the content type of the Object if
+// known, or "" if not
+//
+// This is deliberately unsupported so we don't leak mime type info by
+// default.
+func (o *Object) MimeType(ctx context.Context) string {
+	return ""
+}
+
+// ID returns the ID of the Object if known, or "" if not
+func (o *Object) ID() string {
+	do, ok := o.Object.(fs.IDer)
+	if !ok {
+		return ""
+	}
+	return do.ID()
+}
+
+// ID returns the ID of the Object if known, or "" if not
+func (o *Object) ParentID() string {
+	do, ok := o.Object.(fs.ParentIDer)
+	if !ok {
+		return ""
+	}
+	return do.ParentID()
+}
+
+// ID returns the ID of the Object if known, or "" if not
+func (o *Object) UnWrap() fs.Object {
+	return o.Object
+}
+
+// SetTier performs changing storage tier of the Object if
+// multiple storage classes supported
+func (o *Object) SetTier(tier string) error {
+	do, ok := o.Object.(fs.SetTierer)
+	if !ok {
+		return errors.New("crypt: underlying remote does not support SetTier")
+	}
+	return do.SetTier(tier)
+}
+
+// GetTier returns storage tier or class of the Object
+func (o *Object) GetTier() string {
+	do, ok := o.Object.(fs.GetTierer)
+	if !ok {
+		return ""
+	}
+	return do.GetTier()
+}
+
+// Metadata returns metadata for an object
+//
+// It should return nil if there is no Metadata
 func (o *Object) Metadata(ctx context.Context) (fs.Metadata, error) {
 	do, ok := o.Object.(fs.Metadataer)
 	if !ok {
@@ -538,10 +612,15 @@ func (o *Object) Metadata(ctx context.Context) (fs.Metadata, error) {
 	return do.Metadata(ctx)
 }
 
-func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) {
-	return "", hash.ErrUnsupported
-}
-
+// Open opens the file for read.  Call Close() on the returned io.ReadCloser
+//
+// This calls Open on the object of the underlying remote with fs.SeekOption
+// and fs.RangeOption removes. This is strictly necessary as the file header
+// contains all the information to decrypt the file.
+//
+// We wrap the reader of the underlying object to decrypt the data.
+// - For fs.SeekOption we just discard all the bytes until we reach the Offset
+// - For fs.RangeOption we do the same and then wrap the reader in io.LimitReader
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
 	var offset, limit int64 = 0, -1
 	var openOptions []fs.OpenOption
@@ -555,85 +634,70 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 			openOptions = append(openOptions, option)
 		}
 	}
-	// TODO handle openOptions
 
 	readCloser, err := o.Object.Open(ctx, openOptions...)
 	if err != nil {
 		return nil, err
 	}
 
-	decReader, err := o.f.vault.NewDecryptReader(readCloser)
+	decryptReader, err := o.f.vault.NewDecryptReader(readCloser)
 	if err != nil {
 		return nil, err
 	}
 
 	if offset > 0 {
-		_, err := io.CopyN(io.Discard, decReader, offset)
-		if err != nil {
+		if _, err = io.CopyN(io.Discard, decryptReader, offset); err != nil {
 			return nil, err
 		}
 	}
 
 	if limit != -1 {
-		return readCloseWrapper{
-			Reader: io.LimitReader(decReader, limit),
-			Closer: readCloser,
-		}, nil
+		return newReadCloser(io.LimitReader(decryptReader, limit), readCloser), nil
 	}
 
-	return readCloseWrapper{
-		Reader: decReader,
-		Closer: readCloser,
-	}, nil
+	return newReadCloser(decryptReader, readCloser), nil
 }
 
+// Update in to the object with the modTime given of the given size
+//
+// When called from outside an Fs by rclone, src.Size() will always be >= 0.
+// But for unknown-sized objects (indicated by src.Size() == -1), Upload should either
+// return an error or update the object properly (rather than e.g. calling panic).
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
-	fullPath := o.f.fullPath(src.Remote())
+	o.size = src.Size()
+	o.remote = src.Remote()
+
+	fullPath := o.f.fullPath(o.remote)
 
 	objPath, _, err := o.f.vault.GetFilePath(fullPath)
 	if err != nil {
 		return nil
 	}
 
-	encReader, err := o.f.vault.NewEncryptReader(in)
+	encryptReader, err := o.f.vault.NewEncryptReader(in)
 	if err != nil {
 		return err
 	}
 
 	info := o.f.newEncryptedObjectInfo(src, objPath)
-	// info := object.NewStaticObjectInfo(objPath, src.ModTime(ctx), vault.CalculateEncryptedFileSize(src.Size()), src.Storable(), nil, o.f)
 
-	o.size = src.Size()
-
-	return o.Object.Update(ctx, encReader, info, options...)
+	return o.Object.Update(ctx, encryptReader, info, options...)
 }
 
-func (o *Object) SetTier(tier string) error {
-	do, ok := o.Object.(fs.SetTierer)
-	if !ok {
-		return errors.New("crypt: underlying remote does not support SetTier")
+func newReadCloser(r io.Reader, c io.Closer) io.ReadCloser {
+	return readerCloserWrapper{
+		Reader: r,
+		Closer: c,
 	}
-	println("SETTING TIER")
-	return do.SetTier(tier)
 }
 
-func (o *Object) GetTier() string {
-	do, ok := o.Object.(fs.GetTierer)
-	if !ok {
-		return ""
-	}
-	return do.GetTier()
-}
-
-type readCloseWrapper struct {
+type readerCloserWrapper struct {
 	io.Reader
 	io.Closer
 }
 
 var (
-	_ fs.Fs        = (*Fs)(nil)
-	_ fs.Object    = (*Object)(nil)
-	_ fs.SetTierer = (*Object)(nil)
-	_ fs.GetTierer = (*Object)(nil)
-	_ fs.Directory = (*Directory)(nil)
+	_ fs.Fs         = (*Fs)(nil)
+	_ fs.FullObject = (*Object)(nil)
+	_ fs.Directory  = (*Directory)(nil)
 )
