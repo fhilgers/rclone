@@ -13,18 +13,16 @@ import (
 // Adapts a the Rclone fs.Fs interface to the Fs defined
 // by cryptomator for operations on the vault
 func NewCryptomatorAdapterFs(ctx context.Context, f fs.Fs) *CryptomatorAdapterFs {
-  return &CryptomatorAdapterFs{
-    f: f,
-    ctx: ctx,
-  }
+	return &CryptomatorAdapterFs{
+		f:   f,
+		ctx: ctx,
+	}
 }
-
 
 type CryptomatorAdapterFs struct {
-  f fs.Fs
-  ctx context.Context
+	f   fs.Fs
+	ctx context.Context
 }
-
 
 // Open a file for reading, generally this is used to
 // read the directory id from their dir.id files
@@ -53,7 +51,7 @@ func (w *wrapPipeWriter) Close() error {
 }
 
 // Create a new file for writing, generally this is used to
-// write new directory ids and to write dirid.c9r directory id 
+// write new directory ids and to write dirid.c9r directory id
 // backup files
 // This should fail if the file already exists
 func (f *CryptomatorAdapterFs) Create(name string) (io.WriteCloser, error) {
