@@ -193,14 +193,13 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (obj fs.Object, err error) {
-	fullPath := f.fullPath(src.Remote())
 	if err = f.Mkdir(ctx, filepath.Dir(src.Remote())); err != nil {
 		return
 	}
 
-	objPath, dirID, err := f.vault.GetFilePath(fullPath)
+	dirID, err := f.vault.GetDirID(path.Dir(f.fullPath(src.Remote())))
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	encReader, err := f.vault.NewEncryptReader(in)
@@ -208,7 +207,10 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		return nil, err
 	}
 
-	info := f.newEncryptedObjectInfo(src, objPath)
+	info, err := f.newEncryptedObjectInfo(src, src.Remote())
+	if err != nil {
+		return nil, err
+	}
 
 	obj, err = f.fs.Put(ctx, encReader, info, options...)
 	if err != nil {
@@ -401,6 +403,28 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 	return nil
 }
 
+// Wrap ObjectInfo to pass it on to the underlying fs, eg. determine encrypted size
+// if known and determine encrypted remote path
+func (f *Fs) newEncryptedObjectInfo(info fs.ObjectInfo, remote string) (*EncryptedObjectInfo, error) {
+	encryptedRemote, _, err := f.vault.GetFilePath(f.fullPath(remote))
+	if err != nil {
+		return nil, err
+	}
+
+	size := info.Size()
+	if size != -1 {
+		size = vault.CalculateEncryptedFileSize(info.Size())
+	}
+
+	return &EncryptedObjectInfo{
+		ObjectInfo: info,
+		remote:     encryptedRemote,
+		size:       size,
+	}, nil
+}
+
+// Wrap the Object of the underlying fs, eg. determine decrypted remote path and filesize
+// and attach this fs to Decrypt / Encrypt the Data on Open / Update
 func (f *Fs) newObject(obj fs.Object, dir, dirID string) (*Object, error) {
 	encryptedName := path.Base(obj.Remote())
 	decryptedName, err := f.vault.DecryptFileName(encryptedName, dirID)
@@ -419,6 +443,7 @@ func (f *Fs) newObject(obj fs.Object, dir, dirID string) (*Object, error) {
 	}, nil
 }
 
+// Wrap the Directory of the underlying fs, eg. determine the decrypted remote path
 func (f *Fs) newDirectory(d fs.Directory, dir, dirID string) (*Directory, error) {
 	encName := path.Base(d.Remote())
 	decName, err := f.vault.DecryptFileName(encName, dirID)
@@ -432,22 +457,7 @@ func (f *Fs) newDirectory(d fs.Directory, dir, dirID string) (*Directory, error)
 	}, nil
 }
 
-func (f *Fs) newEncryptedObjectInfo(info fs.ObjectInfo, remote string) *EncryptedObjectInfo {
-	size := info.Size()
-	if size != -1 {
-		size = vault.CalculateEncryptedFileSize(info.Size())
-	}
-	return &EncryptedObjectInfo{
-		ObjectInfo: info,
-		remote:     remote,
-		size:       size,
-	}
-}
-
-func (f *Fs) fullPath(path string) string {
-	return filepath.Join(f.root, path)
-}
-
+// Wrap the DirEntries of the underlying fs in either cryptomator.Object or cryptomator.Directory
 func (f *Fs) wrapEntries(entries fs.DirEntries, dir, dirID string) (wrappedEntries fs.DirEntries, err error) {
 	var wrappedEntry fs.DirEntry
 	for _, entry := range entries {
@@ -469,6 +479,10 @@ func (f *Fs) wrapEntries(entries fs.DirEntries, dir, dirID string) (wrappedEntri
 	}
 
 	return
+}
+
+func (f *Fs) fullPath(path string) string {
+	return filepath.Join(f.root, path)
 }
 
 // EncryptedObjectInfo -----------------------------------
@@ -755,19 +769,15 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	o.size = src.Size()
 	o.remote = src.Remote()
 
-	fullPath := o.f.fullPath(o.remote)
-
-	objPath, _, err := o.f.vault.GetFilePath(fullPath)
-	if err != nil {
-		return nil
-	}
-
 	encryptReader, err := o.f.vault.NewEncryptReader(in)
 	if err != nil {
 		return err
 	}
 
-	info := o.f.newEncryptedObjectInfo(src, objPath)
+	info, err := o.f.newEncryptedObjectInfo(src, o.remote)
+	if err != nil {
+		return err
+	}
 
 	return o.Object.Update(ctx, encryptReader, info, options...)
 }
