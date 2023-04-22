@@ -131,6 +131,14 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 	return f, fsErr
 }
 
+func (f *Fs) DirCacheFlush() {
+	do := f.fs.Features().DirCacheFlush
+	if do != nil {
+		do()
+	}
+	f.vault.FullyInvalidate()
+}
+
 func (f *Fs) Name() string {
 	return f.name
 }
