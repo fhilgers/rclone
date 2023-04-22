@@ -91,12 +91,10 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 
 	v, err := vault.Open(vaultFs, password)
 	if err != nil {
-		// eturn nil, fmt.Errorf("failed to unlock vault: %w", err)
-
-		// TODO create command to init vault
-		v, err = vault.Create(vaultFs, password)
+    fs.Logf(rootFs, "vault not found, creating new")
+    v, err = vault.Create(vaultFs, password)
 		if err != nil {
-			return nil, fmt.Errorf("failed to unlock vault: %w", err)
+			return nil, fmt.Errorf("failed to create vault: %w", err)
 		}
 	}
 
