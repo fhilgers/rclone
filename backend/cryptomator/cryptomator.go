@@ -433,10 +433,14 @@ func (f *Fs) newDirectory(d fs.Directory, dir, dirID string) (*Directory, error)
 }
 
 func (f *Fs) newEncryptedObjectInfo(info fs.ObjectInfo, remote string) *EncryptedObjectInfo {
+	size := info.Size()
+	if size != -1 {
+		size = vault.CalculateEncryptedFileSize(info.Size())
+	}
 	return &EncryptedObjectInfo{
 		ObjectInfo: info,
 		remote:     remote,
-		size:       vault.CalculateEncryptedFileSize(info.Size()),
+		size:       size,
 	}
 }
 
@@ -467,35 +471,92 @@ func (f *Fs) wrapEntries(entries fs.DirEntries, dir, dirID string) (wrappedEntri
 	return
 }
 
+// EncryptedObjectInfo -----------------------------------
+
+// EncryptedObjectInfo provides read only information about an object
+//
+// This is wraps the plain Object info and adds the encrypted remote
+// path and encrypted size to pass it on to the underlying fs.
 type EncryptedObjectInfo struct {
 	fs.ObjectInfo
+
+	f *Fs
 
 	remote string
 	size   int64
 }
 
-func (i *EncryptedObjectInfo) Remote() string {
-	return i.remote
-}
-
+// String returns a description of the Object
 func (i *EncryptedObjectInfo) String() string {
 	return i.remote
 }
 
+// Remote returns the encrypted remote path
+func (i *EncryptedObjectInfo) Remote() string {
+	return i.remote
+}
+
+// Size returns the encrypted size of the file
 func (i *EncryptedObjectInfo) Size() int64 {
 	return i.size
 }
 
+// Fs returns read only access to the Fs that this object is part of
+func (i *EncryptedObjectInfo) Fs() fs.Info {
+	return i.f
+}
+
+// Hash returns the selected checksum of the file
+// If no checksum is available it returns ""
+//
+// TODO: We cannot compute the same hash without storing information
+// about the file header which is not implemented yet.
+func (i *EncryptedObjectInfo) Hash(ctx context.Context, ty hash.Type) (string, error) {
+	return "", hash.ErrUnsupported
+}
+
+// MimeType returns the content type of the Object if
+// known, or "" if not
+//
+// This is deliberately unsupported so we don't leak mime type info by
+// default.
+func (i *EncryptedObjectInfo) MimeType(ctx context.Context) string {
+	return ""
+}
+
+// ID returns the ID of the Object if known, or "" if not
+func (i *EncryptedObjectInfo) ID() string {
+	do, ok := i.ObjectInfo.(fs.IDer)
+	if !ok {
+		return ""
+	}
+	return do.ID()
+}
+
+// UnWrap returns the Object that this Object is wrapping or
+// nil if it isn't wrapping anything
+func (o *EncryptedObjectInfo) UnWrap() fs.Object {
+	return fs.UnWrapObjectInfo(o.ObjectInfo)
+}
+
+// GetTier returns storage tier or class of the Object
+func (i *EncryptedObjectInfo) GetTier() string {
+	do, ok := i.ObjectInfo.(fs.GetTierer)
+	if !ok {
+		return ""
+	}
+	return do.GetTier()
+}
+
+// Metadata returns metadata for an object
+//
+// It should return nil if there is no Metadata
 func (i *EncryptedObjectInfo) Metadata(ctx context.Context) (fs.Metadata, error) {
 	do, ok := i.ObjectInfo.(fs.Metadataer)
 	if !ok {
 		return nil, nil
 	}
 	return do.Metadata(ctx)
-}
-
-func (o *EncryptedObjectInfo) Hash(ctx context.Context, ty hash.Type) (string, error) {
-	return "", hash.ErrUnsupported
 }
 
 // Directory ----------------------------------------
@@ -603,7 +664,8 @@ func (o *Object) ParentID() string {
 	return do.ParentID()
 }
 
-// ID returns the ID of the Object if known, or "" if not
+// UnWrap returns the Object that this Object is wrapping or
+// nil if it isn't wrapping anything
 func (o *Object) UnWrap() fs.Object {
 	return o.Object
 }
@@ -723,7 +785,8 @@ type readerCloserWrapper struct {
 }
 
 var (
-	_ fs.Fs         = (*Fs)(nil)
-	_ fs.FullObject = (*Object)(nil)
-	_ fs.Directory  = (*Directory)(nil)
+	_ fs.Fs             = (*Fs)(nil)
+	_ fs.FullObject     = (*Object)(nil)
+	_ fs.FullObjectInfo = (*EncryptedObjectInfo)(nil)
+	_ fs.Directory      = (*Directory)(nil)
 )
