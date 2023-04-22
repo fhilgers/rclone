@@ -39,10 +39,9 @@ func TestStandard(t *testing.T) {
 	fstests.Run(t, &fstests.Opt{
 		RemoteName: name + ":",
 		ExtraConfig: []fstests.ExtraConfigItem{
-			{Name: name, Key: "type", Value: "crypt"},
+			{Name: name, Key: "type", Value: "cryptomator"},
 			{Name: name, Key: "remote", Value: tempdir},
 			{Name: name, Key: "password", Value: obscure.MustObscure("potato")},
-			{Name: name, Key: "filename_encryption", Value: "standard"},
 		},
 		UnimplementableFsMethods:     []string{"OpenWriterAt"},
 		UnimplementableObjectMethods: []string{"MimeType"},
