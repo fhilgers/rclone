@@ -10,12 +10,25 @@ import (
 	"github.com/rclone/rclone/fs/object"
 )
 
-type VaultFs struct {
-	ctx context.Context
-	f   fs.Fs
+// Adapts a the Rclone fs.Fs interface to the Fs defined
+// by cryptomator for operations on the vault
+func NewCryptomatorAdapterFs(ctx context.Context, f fs.Fs) *CryptomatorAdapterFs {
+  return &CryptomatorAdapterFs{
+    f: f,
+    ctx: ctx,
+  }
 }
 
-func (f *VaultFs) Open(name string) (io.ReadCloser, error) {
+
+type CryptomatorAdapterFs struct {
+  f fs.Fs
+  ctx context.Context
+}
+
+
+// Open a file for reading, generally this is used to
+// read the directory id from their dir.id files
+func (f *CryptomatorAdapterFs) Open(name string) (io.ReadCloser, error) {
 	obj, err := f.f.NewObject(f.ctx, name)
 	if err != nil {
 		return nil, err
@@ -36,12 +49,14 @@ func (w *wrapPipeWriter) Close() error {
 		return err
 	}
 
-	x := <-w.chanErr
-	return x
-	// return nil
+	return <-w.chanErr
 }
 
-func (f *VaultFs) Create(name string) (io.WriteCloser, error) {
+// Create a new file for writing, generally this is used to
+// write new directory ids and to write dirid.c9r directory id 
+// backup files
+// This should fail if the file already exists
+func (f *CryptomatorAdapterFs) Create(name string) (io.WriteCloser, error) {
 	if b, err := fs.FileExists(f.ctx, f.f, name); b {
 		return nil, fmt.Errorf("file exists: %s", name)
 	} else if err != nil {
@@ -64,7 +79,9 @@ func (f *VaultFs) Create(name string) (io.WriteCloser, error) {
 	}, nil
 }
 
-func (f *VaultFs) RemoveDir(name string) error {
+// Remove a directory at a path
+// This should fail if the directory is not empty
+func (f *CryptomatorAdapterFs) RemoveDir(name string) error {
 	if f.f.Features().BucketBased {
 		entries, err := f.f.List(f.ctx, name)
 		if err != nil {
@@ -77,7 +94,9 @@ func (f *VaultFs) RemoveDir(name string) error {
 	return f.f.Rmdir(f.ctx, name)
 }
 
-func (f *VaultFs) RemoveFile(name string) error {
+// Remove a file at a path
+// This should fail if the file does not exist
+func (f *CryptomatorAdapterFs) RemoveFile(name string) error {
 	obj, err := f.f.NewObject(f.ctx, name)
 	if err != nil {
 		return err
@@ -86,6 +105,8 @@ func (f *VaultFs) RemoveFile(name string) error {
 	return obj.Remove(f.ctx)
 }
 
-func (f *VaultFs) MkdirAll(name string) error {
+// Make a directory with all parent directories
+// This should not fail if the directory already exists
+func (f *CryptomatorAdapterFs) MkdirAll(name string) error {
 	return f.f.Mkdir(f.ctx, name)
 }

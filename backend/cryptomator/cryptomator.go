@@ -79,20 +79,17 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 		return nil, err
 	}
 
-	vaultFs := &VaultFs{
-		f:   rootFs,
-		ctx: ctx,
-	}
+  cryptomatorAdapterFs := NewCryptomatorAdapterFs(ctx, rootFs)
 
 	password, err := obscure.Reveal(opts.Password)
 	if err != nil {
 		return nil, err
 	}
 
-	v, err := vault.Open(vaultFs, password)
+	v, err := vault.Open(cryptomatorAdapterFs, password)
 	if err != nil {
     fs.Logf(rootFs, "vault not found, creating new")
-    v, err = vault.Create(vaultFs, password)
+    v, err = vault.Create(cryptomatorAdapterFs, password)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create vault: %w", err)
 		}
