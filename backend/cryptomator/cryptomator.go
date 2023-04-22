@@ -467,24 +467,6 @@ func (f *Fs) wrapEntries(entries fs.DirEntries, dir, dirID string) (wrappedEntri
 	return
 }
 
-type Directory struct {
-	fs.Directory
-	remote string
-}
-
-func (d *Directory) String() string {
-	return d.remote
-}
-
-func (d *Directory) Remote() string {
-	return d.remote
-}
-
-func (d *Directory) Items() int64 {
-	// We dont know the real amount and would have to call list again
-	return -1
-}
-
 type EncryptedObjectInfo struct {
 	fs.ObjectInfo
 
@@ -514,6 +496,42 @@ func (i *EncryptedObjectInfo) Metadata(ctx context.Context) (fs.Metadata, error)
 
 func (o *EncryptedObjectInfo) Hash(ctx context.Context, ty hash.Type) (string, error) {
 	return "", hash.ErrUnsupported
+}
+
+// Directory ----------------------------------------
+
+// Directory wraps a directory of the underlying fs but
+// stores the decrypted remote.
+type Directory struct {
+	fs.Directory
+	remote string
+}
+
+// String returns a description of the Object
+func (d *Directory) String() string {
+	return d.remote
+}
+
+// Remote returns the decrypted remote path
+func (d *Directory) Remote() string {
+	return d.remote
+}
+
+// Size returns the size of the file
+//
+// As we do not know the real size we return 0
+func (d *Directory) Size() int64 {
+	return 0
+}
+
+// Items returns the count of items in this directory or this
+// directory and subdirectories if known, -1 for unknown
+//
+// As the directory structure is flattened and cluttered
+// with dirid.c9r and dir.c9r files we do not know the real
+// amount and return -1
+func (d *Directory) Items() int64 {
+	return -1
 }
 
 // Object -------------------------------------------
