@@ -17,6 +17,7 @@ import (
 	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/fs/object"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/fhilgers/gocryptomator/pkg/vault"
 )
@@ -481,8 +482,8 @@ func (f *Fs) wrapEntries(entries fs.DirEntries, dir, dirID string) (wrappedEntri
 	return
 }
 
-func (f *Fs) fullPath(path string) string {
-	return filepath.Join(f.root, path)
+func (f *Fs) fullPath(name string) string {
+	return norm.NFC.String(path.Join(f.root, name))
 }
 
 // EncryptedObjectInfo -----------------------------------
