@@ -22,6 +22,8 @@ import (
 	"github.com/fhilgers/gocryptomator/pkg/vault"
 )
 
+// Globals
+// Register with Fs
 func init() {
 	fs.Register(&fs.RegInfo{
 		Name:        "cryptomator",
@@ -46,25 +48,7 @@ func init() {
 	})
 }
 
-type Options struct {
-	Remote   string `config:"remote"`
-	Password string `config:"password"`
-}
-
-type Fs struct {
-	fs       fs.Fs
-	name     string
-	root     string
-	vault    *vault.Vault
-	features *fs.Features
-}
-
-func newOpts(m configmap.Mapper) (*Options, error) {
-	opts := new(Options)
-	err := configstruct.Set(m, opts)
-	return opts, err
-}
-
+// NewFs constructs an Fs from the path, container:path
 func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, error) {
 	opts, err := newOpts(m)
 	if err != nil {
@@ -103,12 +87,11 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 			fsErr = fs.ErrorIsFile
 		}
 	}
-
 	f := &Fs{
 		name:  name,
 		root:  rpath,
 		vault: v,
-		fs:    rootFs,
+		Fs:    rootFs,
 	}
 
 	cache.PinUntilFinalized(rootFs, f)
@@ -132,45 +115,76 @@ func NewFs(ctx context.Context, name, rpath string, m configmap.Mapper) (fs.Fs, 
 	return f, fsErr
 }
 
-func (f *Fs) DirCacheFlush() {
-	do := f.fs.Features().DirCacheFlush
-	if do != nil {
-		do()
-	}
-	f.vault.FullyInvalidate()
+// Options defines the configuration for this backend
+type Options struct {
+	Remote   string `config:"remote"`
+	Password string `config:"password"`
 }
 
+// Set the options from the configmap
+func newOpts(m configmap.Mapper) (*Options, error) {
+	opts := new(Options)
+	err := configstruct.Set(m, opts)
+	return opts, err
+}
+
+// Fs ---------------------------------------------
+
+// Fs wraps another fs and encrypts the directory
+// structure, filenames, and file contents as outlined
+// in https://docs.cryptomator.org/en/latest/security/architecture/
+type Fs struct {
+	fs.Fs
+	wrapper  fs.Fs
+	name     string
+	root     string
+	vault    *vault.Vault
+	features *fs.Features
+}
+
+// Name of the remote (as passed into NewFs)
 func (f *Fs) Name() string {
 	return f.name
 }
 
+// Root of the remote (as passed into NewFs)
 func (f *Fs) Root() string {
 	return f.root
 }
 
+// String returns a description of the FS
 func (f *Fs) String() string {
 	return fmt.Sprintf("Cryptomator vault '%s:%s'", f.Name(), f.Root())
 }
 
-func (f *Fs) Precision() time.Duration {
-	return f.fs.Precision()
-}
-
+// Returns the supported hash types of the filesystem
+//
+// We cannot support hashes
 func (f *Fs) Hashes() hash.Set {
 	return hash.Set(hash.None)
 }
 
+// Features returns the optional features of this Fs
 func (f *Fs) Features() *fs.Features {
 	return f.features
 }
 
+// List the objects and directories in dir into entries.  The
+// entries can be returned in any order but should be for a
+// complete directory.
+//
+// dir should be "" to list the root, and should not have
+// trailing slashes.
+//
+// This should return ErrDirNotFound if the directory isn't
+// found.
 func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 	path, dirID, err := f.vault.GetDirPath(f.fullPath(dir))
 	if err != nil {
 		return nil, fs.ErrorDirNotFound
 	}
 
-	entries, err := f.fs.List(ctx, path)
+	entries, err := f.Fs.List(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -178,14 +192,20 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 	return f.wrapEntries(entries, dir, dirID)
 }
 
+// NewObject finds the Object at remote.  If it can't be found
+// it returns the error ErrorObjectNotFound.
+//
+// If remote points to a directory then it should return
+// ErrorIsDir if possible without doing any extra work,
+// otherwise ErrorObjectNotFound.
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	fullPath := f.fullPath(remote)
 	objPath, dirID, err := f.vault.GetFilePath(fullPath)
 	if err != nil {
-		return nil, err
+		return nil, fs.ErrorObjectNotFound
 	}
 
-	obj, err := f.fs.NewObject(ctx, objPath)
+	obj, err := f.Fs.NewObject(ctx, objPath)
 	if err != nil {
 		return nil, err
 	}
@@ -193,34 +213,22 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	return f.newObject(obj, path.Dir(remote), dirID)
 }
 
+// Put in to the remote path with the modTime given of the given size
+//
+// When called from outside an Fs by rclone, src.Size() will always be >= 0.
+// But for unknown-sized objects (indicated by src.Size() == -1), Put should either
+// return an error or upload it properly (rather than e.g. calling panic).
+//
+// May create the object even if it returns an error - if so
+// will return the object and the error, otherwise will return
+// nil and the error
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (obj fs.Object, err error) {
-	if err = f.Mkdir(ctx, filepath.Dir(src.Remote())); err != nil {
-		return
-	}
-
-	dirID, err := f.vault.GetDirID(path.Dir(f.fullPath(src.Remote())))
-	if err != nil {
-		return nil, err
-	}
-
-	encReader, err := f.vault.NewEncryptReader(in)
-	if err != nil {
-		return nil, err
-	}
-
-	info, err := f.newEncryptedObjectInfo(src, src.Remote())
-	if err != nil {
-		return nil, err
-	}
-
-	obj, err = f.fs.Put(ctx, encReader, info, options...)
-	if err != nil {
-		return nil, err
-	}
-
-	return f.newObject(obj, path.Dir(src.Remote()), dirID)
+	return f.put(ctx, in, src, options, f.Fs.Put)
 }
 
+// Mkdir makes the directory (container, bucket)
+//
+// Shouldn't return an error if it already exists
 func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	fullPath := f.fullPath(dir)
 	fullPath = path.Clean(fullPath)
@@ -238,12 +246,24 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	return nil
 }
 
+// Rmdir removes the directory (container, bucket) if empty
+//
+// Return an error if it doesn't exist or isn't empty
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 	return f.vault.Rmdir(f.fullPath(dir))
 }
 
+// Copy src to this remote using server-side copy operations.
+//
+// # This is stored with the remote path given
+//
+// # It returns the destination Object and a possible error
+//
+// Will only be called if src.Fs().Name() == f.Name()
+//
+// If it isn't possible then return fs.ErrorCantCopy
 func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
-	do := f.fs.Features().Copy
+	do := f.Fs.Features().Copy
 	if do == nil {
 		return nil, fs.ErrorCantCopy
 	}
@@ -268,8 +288,17 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	return f.newObject(oResult, path.Dir(remote), dirID)
 }
 
+// Move src to this remote using server-side move operations.
+//
+// # This is stored with the remote path given
+//
+// # It returns the destination Object and a possible error
+//
+// Will only be called if src.Fs().Name() == f.Name()
+//
+// If it isn't possible then return fs.ErrorCantMove
 func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
-	do := f.fs.Features().Move
+	do := f.Fs.Features().Move
 	if do == nil {
 		return nil, fs.ErrorCantMove
 	}
@@ -295,9 +324,16 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 	return f.newObject(oResult, path.Dir(remote), dirID)
 }
 
-// TODO refactor this
+// DirMove moves src, srcRemote to this remote at dstRemote
+// using server-side move operations.
+//
+// Will only be called if src.Fs().Name() == f.Name()
+//
+// If it isn't possible then return fs.ErrorCantDirMove
+//
+// If destination exists then return fs.ErrorDirExists
 func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string) error {
-	do := f.fs.Features().DirMove
+	do := f.Fs.Features().DirMove
 	if do == nil {
 		return fs.ErrorCantDirMove
 	}
@@ -346,7 +382,7 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 
 	// move all the encrypted paths
 	for _, encName := range encSrcNames {
-		if err := do(ctx, srcFs.fs, encName, encName); err == fs.ErrorDirExists {
+		if err := do(ctx, srcFs.Fs, encName, encName); err == fs.ErrorDirExists {
 			// Ignore
 		} else if err != nil {
 			return err
@@ -364,7 +400,7 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 	}
 
 	// remove dirID from src
-	obj, err := srcFs.fs.NewObject(ctx, path.Join(srcDirIDPath, "dir.c9r"))
+	obj, err := srcFs.Fs.NewObject(ctx, path.Join(srcDirIDPath, "dir.c9r"))
 	if err != nil {
 		return err
 	}
@@ -373,7 +409,7 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 		return err
 	}
 
-	if err = srcFs.fs.Rmdir(ctx, srcDirIDPath); err != nil {
+	if err = srcFs.Fs.Rmdir(ctx, srcDirIDPath); err != nil {
 		return err
 	}
 
@@ -387,14 +423,14 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 		return err
 	}
 
-	if err = f.fs.Mkdir(ctx, encName); err != nil {
+	if err = f.Fs.Mkdir(ctx, encName); err != nil {
 		return err
 	}
 
-	info := object.NewStaticObjectInfo(path.Join(encName, "dir.c9r"), time.Now(), -1, true, nil, f.fs)
+	info := object.NewStaticObjectInfo(path.Join(encName, "dir.c9r"), time.Now(), -1, true, nil, f.Fs)
 
 	// write dirID to dest
-	if _, err = f.fs.Put(ctx, strings.NewReader(srcDirID), info); err != nil {
+	if _, err = f.Fs.Put(ctx, strings.NewReader(srcDirID), info); err != nil {
 		return err
 	}
 
@@ -402,6 +438,147 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 	srcFs.vault.FullyInvalidate()
 
 	return nil
+}
+
+// UnWrap returns the Fs that this Fs is wrapping
+func (f *Fs) UnWrap() fs.Fs {
+	return f.Fs
+}
+
+// WrapFs returns the Fs that is wrapping this Fs
+func (f *Fs) WrapFs() fs.Fs {
+	return f.wrapper
+}
+
+// SetWrapper sets the Fs that is wrapping this Fs
+func (f *Fs) SetWrapper(wrapper fs.Fs) {
+	f.wrapper = wrapper
+}
+
+// DirCacheFlush resets the directory cache - used in testing
+// as an optional interface
+func (f *Fs) DirCacheFlush() {
+	do := f.Fs.Features().DirCacheFlush
+	if do != nil {
+		do()
+	}
+	f.vault.FullyInvalidate()
+}
+
+// PublicLink generates a public link to the remote path (usually readable by anyone)
+func (f *Fs) PublicLink(ctx context.Context, remote string, expire fs.Duration, unlink bool) (string, error) {
+	do := f.Fs.Features().PublicLink
+	if do == nil {
+		return "", errors.New("PublicLink not supported")
+	}
+	path, _, err := f.vault.GetDirPath(f.fullPath(remote))
+	if err != nil {
+		path, _, err = f.vault.GetFilePath(f.fullPath(remote))
+		if err != nil {
+			return "", err
+		}
+	}
+	return do(ctx, path, expire, unlink)
+}
+
+// Put in to the remote path with the modTime given of the given size
+//
+// May create the object even if it returns an error - if so
+// will return the object and the error, otherwise will return
+// nil and the error
+//
+// May create duplicates or return errors if src already
+// exists.
+func (f *Fs) PutUnchecked(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
+	do := f.Fs.Features().PutUnchecked
+	if do == nil {
+		return nil, errors.New("PutUnchecked not supported by underlying fs")
+	}
+	return f.put(ctx, in, src, options, do)
+}
+
+// PutStream uploads to the remote path with the modTime given of indeterminate size
+func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
+	return f.put(ctx, in, src, options, f.Fs.Features().PutStream)
+}
+
+// CleanUp the trash in the Fs
+//
+// Implement this if you have a way of emptying the trash or
+// otherwise cleaning up old versions of files.
+func (f *Fs) CleanUp(ctx context.Context) error {
+	do := f.Fs.Features().CleanUp
+	if do == nil {
+		return errors.New("not supported by underlying remote")
+	}
+	return do(ctx)
+}
+
+// About gets quota information from the Fs
+func (f *Fs) About(ctx context.Context) (*fs.Usage, error) {
+	do := f.Fs.Features().About
+	if do == nil {
+		return nil, errors.New("not supported by underlying remote")
+	}
+	return do(ctx)
+}
+
+// UserInfo returns info about the connected user
+func (f *Fs) UserInfo(ctx context.Context) (map[string]string, error) {
+	do := f.Fs.Features().UserInfo
+	if do == nil {
+		return nil, fs.ErrorNotImplemented
+	}
+	return do(ctx)
+}
+
+// Disconnect the current user
+func (f *Fs) Disconnect(ctx context.Context) error {
+	do := f.Fs.Features().Disconnect
+	if do == nil {
+		return fs.ErrorNotImplemented
+	}
+	return do(ctx)
+}
+
+// Shutdown the backend, closing any background tasks and any
+// cached connections.
+func (f *Fs) Shutdown(ctx context.Context) error {
+	do := f.Fs.Features().Shutdown
+	if do == nil {
+		return nil
+	}
+	return do(ctx)
+}
+
+type putFn func(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error)
+
+func (f *Fs) put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options []fs.OpenOption, put putFn) (obj fs.Object, err error) {
+	if err = f.Mkdir(ctx, filepath.Dir(src.Remote())); err != nil {
+		return
+	}
+
+	dirID, err := f.vault.GetDirID(path.Dir(f.fullPath(src.Remote())))
+	if err != nil {
+		return nil, err
+	}
+
+	encReader, err := f.vault.NewEncryptReader(in)
+	if err != nil {
+		return nil, err
+	}
+
+	info, err := f.newEncryptedObjectInfo(src, src.Remote())
+	if err != nil {
+		return nil, err
+	}
+
+	obj, err = f.Fs.Put(ctx, encReader, info, options...)
+	if err != nil {
+		return obj, err
+	}
+
+	return f.newObject(obj, path.Dir(src.Remote()), dirID)
 }
 
 // Wrap ObjectInfo to pass it on to the underlying fs, eg. determine encrypted size
@@ -503,6 +680,9 @@ type EncryptedObjectInfo struct {
 
 // String returns a description of the Object
 func (i *EncryptedObjectInfo) String() string {
+	if i == nil {
+		return "<nil>"
+	}
 	return i.remote
 }
 
@@ -585,6 +765,9 @@ type Directory struct {
 
 // String returns a description of the Object
 func (d *Directory) String() string {
+	if d == nil {
+		return "<nil>"
+	}
 	return d.remote
 }
 
@@ -625,6 +808,9 @@ type Object struct {
 
 // String returns a description of the Object
 func (o *Object) String() string {
+	if o == nil {
+		return "<nil>"
+	}
 	return o.remote
 }
 
@@ -770,19 +956,16 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	o.size = src.Size()
 	o.remote = src.Remote()
 
-	encryptReader, err := o.f.vault.NewEncryptReader(in)
-	if err != nil {
-		return err
+	update := func(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
+		return o.Object, o.Object.Update(ctx, in, src, options...)
 	}
 
-	info, err := o.f.newEncryptedObjectInfo(src, o.remote)
-	if err != nil {
-		return err
-	}
+	_, err := o.f.put(ctx, in, src, options, update)
 
-	return o.Object.Update(ctx, encryptReader, info, options...)
+	return err
 }
 
+// Create a readerCLoserWrapper from both parts
 func newReadCloser(r io.Reader, c io.Closer) io.ReadCloser {
 	return readerCloserWrapper{
 		Reader: r,
@@ -790,14 +973,31 @@ func newReadCloser(r io.Reader, c io.Closer) io.ReadCloser {
 	}
 }
 
+// Wraps a reader and closer, necessary when wrapping
+// a ReadCloser with a method which takes and returns
+// just a Reader.
 type readerCloserWrapper struct {
 	io.Reader
 	io.Closer
 }
 
 var (
-	_ fs.Fs             = (*Fs)(nil)
-	_ fs.FullObject     = (*Object)(nil)
-	_ fs.FullObjectInfo = (*EncryptedObjectInfo)(nil)
-	_ fs.Directory      = (*Directory)(nil)
+	_ fs.Fs              = (*Fs)(nil)
+	_ fs.Copier          = (*Fs)(nil)
+	_ fs.Mover           = (*Fs)(nil)
+	_ fs.DirMover        = (*Fs)(nil)
+	_ fs.PutUncheckeder  = (*Fs)(nil)
+	_ fs.PutStreamer     = (*Fs)(nil)
+	_ fs.CleanUpper      = (*Fs)(nil)
+	_ fs.UnWrapper       = (*Fs)(nil)
+	_ fs.Abouter         = (*Fs)(nil)
+	_ fs.Wrapper         = (*Fs)(nil)
+	_ fs.DirCacheFlusher = (*Fs)(nil)
+	_ fs.PublicLinker    = (*Fs)(nil)
+	_ fs.UserInfoer      = (*Fs)(nil)
+	_ fs.Disconnecter    = (*Fs)(nil)
+	_ fs.Shutdowner      = (*Fs)(nil)
+	_ fs.FullObjectInfo  = (*EncryptedObjectInfo)(nil)
+	_ fs.FullObject      = (*Object)(nil)
+	_ fs.Directory       = (*Directory)(nil)
 )
