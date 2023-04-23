@@ -2,8 +2,8 @@ package cryptomator
 
 import (
 	"context"
-	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/rclone/rclone/fs"
@@ -35,46 +35,15 @@ func (f *CryptomatorAdapterFs) Open(name string) (io.ReadCloser, error) {
 	return obj.Open(f.ctx)
 }
 
-type wrapPipeWriter struct {
-	*io.PipeWriter
-
-	chanErr chan (error)
-}
-
-func (w *wrapPipeWriter) Close() error {
-	err := w.PipeWriter.Close()
-	if err != nil {
-		return err
-	}
-
-	return <-w.chanErr
-}
-
 // Create a new file for writing, generally this is used to
 // write new directory ids and to write dirid.c9r directory id
 // backup files
 // This should fail if the file already exists
-func (f *CryptomatorAdapterFs) Create(name string) (io.WriteCloser, error) {
-	if b, err := fs.FileExists(f.ctx, f.f, name); b {
-		return nil, fmt.Errorf("file exists: %s", name)
-	} else if err != nil {
-		return nil, err
-	}
+func (f *CryptomatorAdapterFs) WriteString(name, content string) error {
+	info := object.NewStaticObjectInfo(name, time.Now(), int64(len(content)), true, nil, f.f)
 
-	pipeReader, pipeWriter := io.Pipe()
-
-	info := object.NewStaticObjectInfo(name, time.Now(), -1, true, nil, f.f)
-
-	chanErr := make(chan (error))
-	go func() {
-		_, err := f.f.Put(f.ctx, pipeReader, info)
-		chanErr <- err
-	}()
-
-	return &wrapPipeWriter{
-		PipeWriter: pipeWriter,
-		chanErr:    chanErr,
-	}, nil
+	_, err := f.f.Put(f.ctx, strings.NewReader(content), info)
+	return err
 }
 
 // Remove a directory at a path
